@@ -1,0 +1,8 @@
+/.claude/
+/logs/
+/data/
+/outputs/
+/notebooks/
+__pycache__/
+/paper/
+/CLAUDE.md
