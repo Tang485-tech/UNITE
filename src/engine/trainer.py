@@ -54,7 +54,8 @@ def train(
     if main:
         output_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(output_dir / "tensorboard") if main else None  # type: ignore[assignment]
-    csv_logger = CSVLogger(output_dir / "metrics.csv") if main else None
+    csv_logger_train = CSVLogger(output_dir / "metrics_train.csv") if main else None
+    csv_logger_val = CSVLogger(output_dir / "metrics_val.csv") if main else None
 
     scaler = torch.amp.GradScaler("cuda", enabled=config.train.amp and device.type == "cuda")
     accumulation_steps = max(1, int(config.train.gradient_accumulation_steps))
@@ -184,8 +185,8 @@ def train(
                             iter=f"{step}/{effective_dataset_iters}",
                         )
 
-                    if main and csv_logger is not None and global_step > 0 and global_step % int(config.train.log_every) == 0:
-                        csv_logger.log({
+                    if main and csv_logger_train is not None and global_step > 0 and global_step % int(config.train.log_every) == 0:
+                        csv_logger_train.log({
                             "phase": "train",
                             "epoch": epoch + 1,
                             "step": global_step,
@@ -221,8 +222,8 @@ def train(
                 if writer is not None:
                     for name, value in metrics.items():
                         writer.add_scalar(f"val/{name}", value, epoch + 1)
-                if csv_logger is not None:
-                    csv_logger.log({"phase": "val", "epoch": epoch + 1, "step": global_step, **metrics})
+                if csv_logger_val is not None:
+                    csv_logger_val.log({"phase": "val", "epoch": epoch + 1, "step": global_step, **metrics})
                 metric_value = metrics.get(best_metric_name, float("nan"))
                 print(f"Validation epoch {epoch + 1}: {metrics}")
                 if not math.isnan(metric_value) and metric_value > best_metric:

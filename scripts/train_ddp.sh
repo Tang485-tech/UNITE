@@ -13,7 +13,7 @@ NPROC=6
 CONFIG="configs/unite_ffpp_c23.yaml"
 
 # resume from checkpoint (leave empty to train from scratch)
-RESUME=""
+RESUME="/home/tangbo/code/projects/UNITE/outputs/ffpp_c23/baseline/siglip-so400m-patch14-384_d4_h12/img384_nf64_stride2/ce0.5_ad0.5/lr0.0001_effbs32_gc1_amp0/exp01/last.ckpt"
 
 # last-level output directory name; leave empty to use seed{seed}
 RUN_NAME="exp01"

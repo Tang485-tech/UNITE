@@ -48,7 +48,10 @@ def compute_binary_metrics(labels: list[int] | np.ndarray, fake_scores: list[flo
     if len(np.unique(labels_array)) >= 2:
         prec, rec, thresh = precision_recall_curve(labels_array, scores_array)
         tpr = rec[:-1]
-        tnr = (np.sum(labels_array == 0) - np.searchsorted(np.sort(scores_array[labels_array == 0]), thresh, side="right")) / max(np.sum(labels_array == 0), 1)
+        # A negative is a true negative when its score is below the threshold
+        # (predicted positive iff score >= thresh). searchsorted(..., "left")
+        # counts negatives strictly below thresh -> TN count -> TNR.
+        tnr = np.searchsorted(np.sort(scores_array[labels_array == 0]), thresh, side="left") / max(np.sum(labels_array == 0), 1)
         tnr = np.clip(tnr, 0, 1)
         bal_accs = (tpr + tnr) / 2.0
         if bal_accs.size:

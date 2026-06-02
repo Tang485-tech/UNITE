@@ -1,0 +1,78 @@
+# E2 — AD-loss ablation run.
+# Identical to unite_ffpp_c23.yaml except loss.ad_weight=0.0 (CE-only).
+# Isolates whether the AD-loss (sharing the frozen-encoder pooler params with
+# the classifier) is degrading in-domain discriminability.
+seed: 42
+
+experiment:
+  dataset: ffpp_c23
+  variant: e2_ceonly
+  run_name: ""
+
+paths:
+  data_root: ./data/FaceForensics++_C23
+  metadata_csv: ./data/FaceForensics++_C23/csv/FF++_Metadata.csv
+  split_dir: ./data/FaceForensics++_C23/splits
+  output_root: ./outputs
+  output_dir: auto
+
+splits:
+  train: train.csv
+  val: val.csv
+  test: test.csv
+
+data:
+  image_size: 384
+  num_frames: 64
+  temporal_stride: 2
+  train_random_start: true
+  require_exists: true
+  num_workers: 4
+  persistent_workers: true
+  prefetch_factor: 2
+  pin_memory: true
+  image_mean: [0.5, 0.5, 0.5]
+  image_std: [0.5, 0.5, 0.5]
+
+model:
+  siglip_model_name: google/siglip-so400m-patch14-384
+  local_files_only: false
+  freeze_siglip: true
+  encoder_batch_size: 8
+  hidden_size: 1152
+  num_classes: 2
+  num_frames: 64
+  transformer_depth: 4
+  num_heads: 12
+  mlp_ratio: 4.0
+  dropout: 0.1
+
+loss:
+  ce_weight: 0.5
+  ad_weight: 0.0   # --- E2 change: disable AD-loss (CE-only) ---
+  center_eta: 0.05
+  delta_between: 0.5
+  delta_within: [0.01, -2.0]
+
+train:
+  epochs: 25
+  batch_size: 1
+  effective_batch_size: 32
+  gradient_accumulation_steps: 32
+  lr: 0.0001
+  weight_decay: 0.01
+  scheduler_step_size: 1000
+  scheduler_gamma: 0.5
+  amp: false
+  grad_clip_max_norm: 1.0
+  warmup_steps: 0
+  debug_anomaly: false
+  log_grad_norm: false
+  log_timing: false
+  timing_log_every: 20
+  log_every: 10
+  validate_every_epoch: true
+  save_every_epoch: true
+
+metrics:
+  best_metric: roc_auc
