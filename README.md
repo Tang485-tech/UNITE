@@ -1,66 +1,73 @@
-# UNITE 训练流程复现
+# UNITE — Unofficial Reproduction
 
-本项目用于复现论文 **Towards a Universal Synthetic Video Detector From Face or Background** 中 UNITE 的训练流程。当前实现优先支持在 **FaceForensics++ C23** 上进行 FF++ only 的二分类训练：`REAL -> 0`，`FAKE -> 1`。
+> **Note**: This is an **unofficial reproduction** of the UNITE paper. It is not the original authors' implementation. For the original paper, please refer to the citation below.
 
-当前版本不包含 SAIL-VOS-3D/GTA-V 训练数据，因此可以跑通 UNITE 的训练、验证、测试流程，但不是论文完整的 `FF++ + GTA-V` universal detector 设置。
+This repository reproduces the training pipeline of **UNITE** from the paper:
 
-## 目录结构
+> **Towards a Universal Synthetic Video Detector: From Face or Background Manipulations to Fully AI-Generated Content**
+>
+> Rohit Kundu, Hao Xiong, Vishal Mohanty, Athula Balachandran, Amit K. Roy-Chowdhury
+>
+> CVPR 2025
+
+The current implementation supports binary classification (`REAL → 0`, `FAKE → 1`) trained on **FaceForensics++ C23** only (no SAIL-VOS-3D/GTA-V). It runs the full train → validate → test loop but is **not** the complete `FF++ + GTA-V` universal detector setup from the paper.
+
+## Directory Structure
 
 ```text
 ./
-├── download_FFpp.py                       # 下载并移动 FF++ C23 数据
-├── requirements.txt                       # Python 依赖
+├── download_FFpp.py                       # Download & relocate FF++ C23 data
+├── requirements.txt                       # Python dependencies
 ├── configs/
-│   └── unite_ffpp_c23.yaml                # 默认训练配置
+│   └── unite_ffpp_c23.yaml                # Default training config
 ├── scripts/
-│   └── train_ddp.sh                       # 训练启动脚本（可编辑参数）
-├── train.py                               # 训练入口
-├── eval.py                                # 评估入口
+│   └── train_ddp.sh                       # DDP launcher script (edit vars at top)
+├── train.py                               # Training entry point
+├── eval.py                                # Evaluation entry point
 ├── src/
-│   ├── data/                              # CSV、视频读取、Dataset
-│   ├── engine/                            # 训练与评估循环
+│   ├── data/                              # CSV, video reader, Dataset
+│   ├── engine/                            # Training & evaluation loop
 │   ├── losses/                            # CE + Attention Diversity loss
 │   ├── models/                            # SigLIP encoder + UNITE Transformer
-│   └── utils/                             # 配置、指标、checkpoint、日志
+│   └── utils/                             # Config, metrics, checkpoint, logging
 └── data/
-    ├── build_ffpp_splits.py               # 构建 FF++ train/val/test split
-    └── FaceForensics++_C23/               # FF++ C23 数据根目录
+    ├── build_ffpp_splits.py               # Build FF++ train/val/test splits
+    └── FaceForensics++_C23/               # FF++ C23 data root
 ```
 
-训练输出会按关键参数自动分层写到 `./outputs/` 下，例如：
+Training outputs are automatically organized under `./outputs/` by key hyperparameters, e.g.:
 
 ```text
 outputs/ffpp_c23/siglip-so400m-patch14-384_d4_h12/img384_nf64_stride2/ce0.5_ad0.5/lr0.0001_effbs32_gc1_amp0/seed42/
 ```
 
-如果指定 `--run_name smoke`，最后一级目录会从 `seed42` 变成 `smoke`。
+Use `--run_name <name>` to override the last path segment (e.g. `seed42` → `smoke`).
 
-## 1. 安装环境
+## 1. Environment Setup
 
-建议先创建并激活虚拟环境，然后安装依赖：
+Create and activate a virtual environment, then install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-如果你的 CUDA / PyTorch 环境和 `requirements.txt` 中的版本不兼容，请按本机 CUDA 版本安装对应的 PyTorch，再安装其余依赖。
+If your CUDA / PyTorch environment is incompatible with the versions pinned in `requirements.txt`, install a matching PyTorch build for your CUDA version first, then install the remaining dependencies.
 
-## 2. 准备 FF++ C23 数据
+## 2. Prepare FF++ C23 Data
 
-数据下载脚本会使用 KaggleHub 下载 `xdxd003/ff-c23`，并移动到：
+The download script uses KaggleHub to fetch `xdxd003/ff-c23` and places it under:
 
 ```text
 data/FaceForensics++_C23
 ```
 
-运行：
+Run:
 
 ```bash
-
 python download_FFpp.py
 ```
 
-预期目录结构：
+Expected directory structure:
 
 ```text
 ./data/FaceForensics++_C23
@@ -82,30 +89,29 @@ python download_FFpp.py
     └── original.csv
 ```
 
-主元数据文件是：
+The master metadata file is:
 
 ```text
 ./data/FaceForensics++_C23/csv/FF++_Metadata.csv
 ```
 
-其中 `File Path` 是相对 `FaceForensics++_C23` 数据根目录的路径，例如：
+The `File Path` column contains paths relative to the `FaceForensics++_C23` data root, e.g.:
 
 ```text
 DeepFakeDetection/01_02__meeting_serious__YVGY8LOK.mp4
 ```
 
-## 3. 构建 train / val / test split
+## 3. Build Train / Val / Test Splits
 
-FF++ 既是训练源域，也可以作为域内评估数据。为了避免数据泄漏，需要拆成三份：
+FF++ serves as both the training source domain and the in-domain evaluation set. To prevent data leakage, split it into three subsets:
 
-- `train`：训练模型
-- `val`：选择 `best_auc.ckpt` 和调参
-- `test`：最终报告 FF++ 域内测试结果
+- `train` — model training
+- `val` — checkpoint selection (`best_auc.ckpt`) and hyperparameter tuning
+- `test` — final in-domain (FF++) evaluation
 
-数据下载完成后运行：
+Run after downloading:
 
 ```bash
-
 python data/build_ffpp_splits.py \
   --input_csv data/FaceForensics++_C23/csv/FF++_Metadata.csv \
   --data_root data/FaceForensics++_C23 \
@@ -116,7 +122,7 @@ python data/build_ffpp_splits.py \
   --require_exists
 ```
 
-输出文件：
+Output files:
 
 ```text
 data/FaceForensics++_C23/splits/train.csv
@@ -124,56 +130,55 @@ data/FaceForensics++_C23/splits/val.csv
 data/FaceForensics++_C23/splits/test.csv
 ```
 
-`--require_exists` 会过滤还没有下载完成或路径不匹配的视频。如果 split 为空，通常说明数据还没有下载完成，或 CSV 中的相对路径与实际目录不一致。
+`--require_exists` filters out videos that haven't finished downloading or have mismatched paths. An empty split usually means the data isn't fully downloaded yet, or the relative paths in the CSV don't match the actual directory layout.
 
-## 4. 加快训练速度
+## 4. Speeding Up Training
 
-训练的主要瓶颈来自 **SigLIP 编码**（每样本 64 帧 × 384×384 逐一过 frozen 模型）和 **梯度累积**（单卡 batch_size=1，需 32 步才凑出一个 effective batch）。以下按收益从大到小列出加速手段。
+The main bottlenecks are **SigLIP encoding** (64 frames × 384×384 per sample through a frozen model) and **gradient accumulation** (single-GPU `batch_size=1` needs 32 steps to assemble one effective batch). The following techniques are listed in descending order of impact.
 
-### 4.1 多卡 DDP（收益最大）
+### 4.1 Multi-GPU DDP (largest gain)
 
-多卡并行训练时梯度累积步数自动按卡数缩减，保持全局 effective batch=32 不变。例如 4 卡时 `gradient_accumulation_steps` 自动从 32 → 8，等效训练步数减少 4 倍。
+With DDP, gradient accumulation steps are automatically scaled down by the number of GPUs while keeping the global effective batch size at 32. E.g., 4 GPUs reduce `gradient_accumulation_steps` from 32 → 8, yielding ~4× fewer effective training steps.
 
 ```bash
-# 4 卡
+# 4 GPUs
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 train.py \
   --config configs/unite_ffpp_c23.yaml --run_name exp_ddp
 
-# 8 卡
+# 8 GPUs
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nproc_per_node=8 train.py \
   --config configs/unite_ffpp_c23.yaml --run_name exp_ddp
 ```
 
-或直接编辑 `scripts/train_ddp.sh` 中的 `GPUS` 和 `NPROC` 后运行：
+Or edit `GPUS` and `NPROC` in `scripts/train_ddp.sh` and run:
+
 ```bash
 bash scripts/train_ddp.sh
 ```
 
-### 4.2 开启混合精度（AMP）
+### 4.2 Enable AMP (Automatic Mixed Precision)
 
-在配置中将 `train.amp` 设为 `true`，可减少约 30-40% 显存和计算时间。虽然 SigLIP 权重冻结且以 fp32 运行，但 transformer 部分的 forward/backward 会使用 fp16，在大多数 GPU 上安全且明显提速。
+Set `train.amp: true` in the config. Reduces memory and compute time by ~30–40%. SigLIP weights remain frozen in fp32, but the transformer forward/backward uses fp16 — safe and noticeably faster on most GPUs.
 
 ```yaml
 train:
   amp: true
 ```
 
-或在已有配置上临时覆盖（修改 yaml 或直接用脚本传参不方便时建议直接改 yaml）。
+### 4.3 Increase encoder_batch_size
 
-### 4.3 提高 encoder_batch_size
-
-`model.encoder_batch_size` 控制 SigLIP 一次前向处理多少帧。默认 4，显存充裕时可提高到 8 或 16，显著减少 encoder 调用次数。
+`model.encoder_batch_size` controls how many frames SigLIP processes per forward call. Default is 4; raise to 8 or 16 if VRAM allows to significantly reduce encoder calls.
 
 ```yaml
 model:
-  encoder_batch_size: 8   # 或 16，视显存而定
+  encoder_batch_size: 8   # or 16, depending on VRAM
 ```
 
-### 4.4 增大 DataLoader 并行度
+### 4.4 Increase DataLoader Parallelism
 
-- **`num_workers`**：Linux 下建议设为 4-8；Windows 下建议保持 0（多进程在 Windows 上不稳定）。
-- **`prefetch_factor`**：每个 worker 预取的 batch 数，默认 2，可提高到 4。
-- **`pin_memory: true`**（默认开启）：配合 GPU 训练时加速 CPU→GPU 传输。
+- **`num_workers`** — 4–8 on Linux; keep at 0 on Windows (multi-processing is unstable on Windows).
+- **`prefetch_factor`** — batches pre-loaded per worker; default 2, can raise to 4.
+- **`pin_memory: true`** (default on) — speeds up CPU→GPU transfer.
 
 ```yaml
 data:
@@ -183,98 +188,98 @@ data:
   persistent_workers: true
 ```
 
-### 4.5 减少 Io 与验证开销
+### 4.5 Reduce I/O & Validation Overhead
 
-- **`log_every`**：默认每 10 步写一次 CSV/tensorboard，调大到 50 或 100 可减少少量磁盘开销。
-- **`validate_every_epoch: false`**：快速实验时可关闭逐 epoch 验证，只在最后评估。
-- **`save_every_epoch: false`**：减少 checkpoint 写入（不影响训练速度，但节省磁盘 I/O）。
-- **`debug_anomaly: false`**（默认关闭）：开启会大幅拖慢训练，仅调试 NaN 时才用。
-- **`log_timing: false`**（默认关闭）：开启后会插入 `cuda.synchronize`，拖慢训练，仅 profile 时用。
+- **`log_every`** — writes CSV/TensorBoard every N steps (default 10); raise to 50–100 for small disk savings.
+- **`validate_every_epoch: false`** — skip per-epoch validation; evaluate only at the end.
+- **`save_every_epoch: false`** — reduce checkpoint writes (saves disk I/O, doesn't affect training speed).
+- **`debug_anomaly: false`** (default off) — enables PyTorch anomaly detection; drastically slows training. Only for NaN debugging.
+- **`log_timing: false`** (default off) — inserts `cuda.synchronize`; slows training. Only for profiling.
 
-### 4.6 减少 epoch 数 / 快速 smoke test
+### 4.6 Fewer Epochs / Quick Smoke Test
 
-快速验证流程是否跑通时，用命令行参数限制步数，无需改配置：
+For a fast pipeline check, limit steps via CLI arguments (no config changes needed):
 
 ```bash
 python train.py --config configs/unite_ffpp_c23.yaml --device cuda:0 \
   --max_train_steps 20 --max_val_steps 5
 ```
 
-正式训练如果收敛足够快，也可以减少 `train.epochs`（默认 25）到 15-20。
+If convergence is fast enough, you can also reduce `train.epochs` (default 25) to 15–20.
 
-### 4.7 单卡调参速查
+### 4.7 Quick Single-GPU Tuning Reference
 
-单卡下最快的配置组合（按显存 24GB+ 调整）：
+Fastest single-GPU config (assuming ≥24 GB VRAM):
 
 ```yaml
 data:
-  num_workers: 8         # Linux；Windows 用 0
+  num_workers: 8         # Linux; use 0 on Windows
 
 model:
-  encoder_batch_size: 8  # 显存不足则降回 4
+  encoder_batch_size: 8  # lower to 4 if OOM
 
 train:
-  amp: true              # 混合精度
+  amp: true              # mixed precision
   log_every: 50
   validate_every_epoch: true
 ```
 
-## 5. 配置文件
+## 5. Configuration Reference
 
-默认配置位于 `configs/unite_ffpp_c23.yaml`。以下说明非自明参数：
+Default config: `configs/unite_ffpp_c23.yaml`. Non-obvious parameters explained below.
 
 ### data
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `temporal_stride` | 2 | 隔帧采样步长，1=逐帧，2=每隔一帧 |
-| `train_random_start` | true | 训练时在视频中随机位置取 64 帧片段 |
-| `require_exists` | true | 过滤尚不存在的视频文件 |
-| `num_workers` | 0 | DataLoader 进程数，Windows 建议 0 |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `temporal_stride` | 2 | Frame sampling stride; 1 = consecutive, 2 = every other frame |
+| `train_random_start` | true | Random start position for 64-frame clips during training |
+| `require_exists` | true | Filter out video files that don't exist on disk |
+| `num_workers` | 0 | DataLoader workers; keep at 0 on Windows |
 
 ### model
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `siglip_model_name` | google/siglip-so400m-patch14-384 | HuggingFace 模型标识或本地路径 |
-| `local_files_only` | false | true=仅使用本地缓存的权重 |
-| `freeze_siglip` | true | 冻结视觉编码器，不参与梯度更新 |
-| `encoder_batch_size` | 4 | SigLIP 每次编码的帧数上限，显存不足时降低 |
-| `transformer_depth` | 4 | Transformer encoder 层数 |
-| `num_heads` | 12 | 多头注意力头数 |
-| `mlp_ratio` | 4.0 | MLP 隐藏层维度 = hidden_size × ratio |
-| `dropout` | 0.1 | Transformer 中 dropout 比例 |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `siglip_model_name` | google/siglip-so400m-patch14-384 | HuggingFace model ID or local path |
+| `local_files_only` | false | true = use only cached weights |
+| `freeze_siglip` | true | Freeze the vision encoder (no gradient updates) |
+| `encoder_batch_size` | 4 | Max frames per SigLIP forward call; lower if OOM |
+| `transformer_depth` | 4 | Number of transformer encoder layers |
+| `num_heads` | 12 | Multi-head attention heads |
+| `mlp_ratio` | 4.0 | MLP hidden dim = hidden_size × ratio |
+| `dropout` | 0.1 | Dropout rate in transformer |
 
 ### loss
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `ce_weight` / `ad_weight` | 0.5 | CE 和 Attention Diversity 损失的权重 |
-| `center_eta` | 0.05 | AD loss 中类别中心的 EMA 更新速率 |
-| `delta_between` | 0.5 | 类间中心距离低于此值产生 penalty |
-| `delta_within` | [0.01, -2.0] | 各类别的类内距离 margin（real / fake） |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `ce_weight` / `ad_weight` | 0.5 | Weights for CE and Attention Diversity losses |
+| `center_eta` | 0.05 | EMA update rate for class centers in AD loss |
+| `delta_between` | 0.5 | Penalty threshold for inter-class center distance |
+| `delta_within` | [0.01, -2.0] | Within-class distance margins (real / fake) |
 
 ### train
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `effective_batch_size` | 32 | 目标全局 batch size（文档值，不直接使用） |
-| `gradient_accumulation_steps` | 32 | 梯度累积步数；DDP 时自动 ÷ 卡数 |
-| `scheduler_step_size` | 1000 | 每 N 个 optimizer step 衰减一次学习率 |
-| `scheduler_gamma` | 0.5 | 学习率衰减因子 |
-| `amp` | false | 混合精度训练；SigLIP 冻结时不推荐开 |
-| `grad_clip_max_norm` | 1.0 | 梯度总范数裁剪阈值 |
-| `warmup_steps` | 0 | LR 线性预热步数，0=关闭 |
-| `debug_anomaly` | false | PyTorch 自动异常检测，定位 NaN 用 |
-| `log_grad_norm` | false | 每个 optimizer step 打印梯度范数到终端 |
-| `log_every` | 10 | 每 N 个 optimizer step 写一次 CSV 指标 |
-| `validate_every_epoch` | true | 每个 epoch 后验证 |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `effective_batch_size` | 32 | Target global batch size (documentation; not directly used) |
+| `gradient_accumulation_steps` | 32 | Gradient accumulation steps; auto-scaled ÷ world_size in DDP |
+| `scheduler_step_size` | 1000 | LR decay every N optimizer steps |
+| `scheduler_gamma` | 0.5 | LR decay factor |
+| `amp` | false | Automatic mixed precision |
+| `grad_clip_max_norm` | 1.0 | Global gradient norm clipping threshold |
+| `warmup_steps` | 0 | Linear LR warmup steps; 0 = off |
+| `debug_anomaly` | false | PyTorch anomaly detection (for NaN debugging only) |
+| `log_grad_norm` | false | Print gradient norm to console each optimizer step |
+| `log_every` | 10 | Write CSV metrics every N optimizer steps |
+| `validate_every_epoch` | true | Run validation after each epoch |
 
-## 6. Smoke test
+## 6. Smoke Test
 
-先跑一个很短的测试，确认数据、模型、loss、checkpoint 流程能通。
+Run a short test to verify that data loading, model, loss, and checkpointing all work.
 
-单卡：
+Single GPU:
 
 ```bash
 python train.py \
@@ -284,7 +289,7 @@ python train.py \
   --max_val_steps 5
 ```
 
-多卡 (DDP)：
+Multi-GPU (DDP):
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train.py \
@@ -293,15 +298,15 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train.py \
   --max_val_steps 5
 ```
 
-如果显存不足，优先尝试：
+If you hit OOM, try in order:
 
-1. 保持 `train.batch_size: 1`
-2. 降低 `model.encoder_batch_size`
-3. 保持或增加 `train.gradient_accumulation_steps`
+1. Keep `train.batch_size: 1`
+2. Lower `model.encoder_batch_size`
+3. Maintain or increase `train.gradient_accumulation_steps`
 
-## 7. 正式训练
+## 7. Full Training
 
-### 单卡
+### Single GPU
 
 ```bash
 python train.py \
@@ -310,27 +315,27 @@ python train.py \
   --run_name exp01
 ```
 
-### 多卡 (DDP)
+### Multi-GPU (DDP)
 
-程序不会自动探测 GPU，你需要通过 `CUDA_VISIBLE_DEVICES` 显式指定用哪些卡：
+GPUs are not auto-detected — you must explicitly list them via `CUDA_VISIBLE_DEVICES`:
 
 ```bash
-# 4 卡
+# 4 GPUs
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 train.py --config configs/unite_ffpp_c23.yaml --run_name exp01
 
-# 8 卡
+# 8 GPUs
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nproc_per_node=8 train.py --config configs/unite_ffpp_c23.yaml --run_name exp01
 ```
 
-DDP 训练时 `gradient_accumulation_steps` 会自动按卡数等比缩减，保持全局等效 batch size 不变（32）。例如 4 卡时 accum=8，8 卡时 accum=4。
+Under DDP, `gradient_accumulation_steps` is automatically scaled down by the number of GPUs to keep the global effective batch size at 32. E.g., accum=8 for 4 GPUs, accum=4 for 8 GPUs.
 
-或使用训练脚本快速启动（更多参数修改直接编辑脚本）：
+Or use the launcher script (edit parameters inside the script as needed):
 
 ```bash
 bash scripts/train_ddp.sh
 ```
 
-训练过程中会在解析后的实验目录中保存：
+During training, the following artifacts are saved under the resolved experiment directory:
 
 ```text
 <run_dir>/latest_train.ckpt
@@ -341,27 +346,24 @@ bash scripts/train_ddp.sh
 <run_dir>/tensorboard/
 ```
 
-启动时终端会打印实际路径：`Output directory: <run_dir>`。
+The actual path is printed at startup: `Output directory: <run_dir>`.
 
-其中：
+- `latest_train.ckpt` — resume point after train completes but before validation; resume skips directly to validation
+- `last.ckpt` — full epoch checkpoint (train + validation + save all done)
+- `best_auc.ckpt` — best checkpoint by FF++ validation ROC AUC
+- `metrics_train.csv` — training metrics log (loss, center distances, etc.)
+- `metrics_val.csv` — validation metrics log (ROC AUC, PR AUC, accuracy, etc.)
+- `tensorboard/` — TensorBoard event files
 
-- `latest_train.ckpt`：当前 epoch 的 train 已完成、validation 未完成时的恢复点；resume 后只补 validation
-- `last.ckpt`：train + validation + checkpoint 全部完成后的完整 epoch checkpoint
-- `best_auc.ckpt`：按 FF++ validation ROC AUC 选择的最好 checkpoint
-- `metrics_train.csv`：训练指标日志（loss、center distance 等）
-- `metrics_val.csv`：验证指标日志（ROC AUC、PR AUC、accuracy 等）
-- `tensorboard/`：TensorBoard 日志
-
-查看 TensorBoard：
+View TensorBoard:
 
 ```bash
-
 tensorboard --logdir <run_dir>/tensorboard
 ```
 
-## 8. 断点恢复训练
+## 8. Resume Training
 
-推荐从完整 checkpoint 恢复：
+Recommended: resume from a completed epoch checkpoint:
 
 ```bash
 python train.py \
@@ -371,7 +373,7 @@ python train.py \
   --resume <run_dir>/last.ckpt
 ```
 
-如果训练在 validation 阶段中断，`latest_train.ckpt` 会跳过已完成的 train，只补该 epoch 的 validation，保证 TensorBoard 的 validation 曲线不会缺点：
+If training was interrupted during validation, `latest_train.ckpt` skips the already-completed training and only runs the pending validation for that epoch, ensuring the validation curve in TensorBoard has no gaps:
 
 ```bash
 python train.py \
@@ -381,16 +383,15 @@ python train.py \
   --resume <run_dir>/latest_train.ckpt
 ```
 
-使用脚本时，编辑 `scripts/train_ddp.sh` 的 `RUN_NAME` 和 `RESUME` 字段再运行。恢复同一个实验时，`RUN_NAME` 应与原训练保持一致。TensorBoard 默认写入同一个 `<run_dir>/tensorboard/` 目录，resume 后会读取 checkpoint 中的 `writer_step` 和 `global_step`：训练 loss 曲线按 `writer_step` 连续追加，学习率/梯度范数按 `global_step` 连续追加，validation 曲线按 epoch 补点。
+When using scripts, edit `RUN_NAME` and `RESUME` in `scripts/train_ddp.sh`. The `RUN_NAME` should match the original training run. TensorBoard logs write to the same `<run_dir>/tensorboard/` directory; on resume, `writer_step` and `global_step` are restored from the checkpoint, so training loss curves append continuously by `writer_step`, learning rate / gradient norm by `global_step`, and validation curves fill in by epoch.
 
-只加载你自己训练生成的 checkpoint。项目为了兼容 PyTorch 2.6+ 的 `torch.load` 安全默认值，会用 `weights_only=False` 读取本地 checkpoint。
+Only load checkpoints you trained yourself. For compatibility with PyTorch 2.6+ `torch.load` safety defaults, local checkpoints are loaded with `weights_only=False`.
 
-## 9. 评估
+## 9. Evaluation
 
-验证集评估：
+Validation set:
 
 ```bash
-
 python eval.py \
   --config configs/unite_ffpp_c23.yaml \
   --ckpt <run_dir>/best_auc.ckpt \
@@ -398,7 +399,7 @@ python eval.py \
   --device cuda
 ```
 
-测试集评估：
+Test set:
 
 ```bash
 python eval.py \
@@ -408,7 +409,7 @@ python eval.py \
   --device cuda
 ```
 
-当前评估是 clip-level 二分类评估，输出指标包括：
+Evaluation is clip-level binary classification. Output metrics include:
 
 - accuracy
 - ROC AUC
@@ -418,90 +419,89 @@ python eval.py \
 - precision@recall=0.8
 - recall@precision=0.8
 
-## 10. 跨域测试说明
+## 10. Cross-Domain Evaluation
 
-论文的核心目标是通用检测，因此不要只看 FF++ 域内测试。FF++ only 训练完成后，可以继续准备外部数据集做跨域评估。
+The paper's core goal is universal detection — don't rely solely on FF++ in-domain results. After FF++-only training, prepare external datasets for cross-domain evaluation.
 
-论文中适合跨域评估的数据集包括：
+Suitable cross-domain datasets from the paper:
 
-- Face manipulation：CelebDF、DeeperForensics、Deepfake-TIMIT、HifiFace、UADFV
-- Background manipulation：AVID
-- Fully synthetic：DeMamba；如果没有参与训练，GTA-V 也可作为 fully synthetic 测试
-- In-the-wild：NYTimes DeepFake Quiz
+- Face manipulation: CelebDF, DeeperForensics, Deepfake-TIMIT, HifiFace, UADFV
+- Background manipulation: AVID
+- Fully synthetic: DeMamba; if unused during training, GTA-V can also serve as fully synthetic test data
+- In-the-wild: NYTimes DeepFake Quiz
 
-当前仓库没有为这些外部数据集内置下载和格式转换脚本。后续接入时应保持与 FF++ split 类似的 CSV 字段，至少包含：
+This repository does not yet include download and format conversion scripts for these external datasets. When adding them, maintain CSV columns consistent with the FF++ splits:
 
 ```text
 abs_path,rel_path,label
 ```
 
-然后复用 `eval.py` 做评估。跨域测试集不能混入 FF++ 训练集或验证集。
+Then reuse `eval.py` for evaluation. Cross-domain test sets must not overlap with FF++ training or validation splits.
 
-## 11. 训练创新版（GTA-free Universal Detector）
+## 11. GTA-Free Variant (Innovation)
 
-创新版在 baseline 基础上增加三个模块，旨在缓解 face-only 偏置并提升跨域泛化：
+The GTA-free variant adds three modules on top of the baseline to mitigate face-only bias and improve cross-domain generalization:
 
-- 人脸掩蔽增强：用 OpenCV Haar cascade 在训练时构造 face-masked view
-- Attention anti-collapse 损失：防止 attention 过度集中在少数帧
-- Counterfactual consistency 损失：要求原图与 face-masked 图预测一致
-- 类别平衡 CE：inverse-frequency 权重，缓解 fake-biased 预测
+- **Face masking augmentation** — OpenCV Haar cascade constructs face-masked views during training
+- **Attention anti-collapse loss** — prevents attention from collapsing onto too few frames
+- **Counterfactual consistency loss** — enforces prediction consistency between original and face-masked views
+- **Class-balanced CE** — inverse-frequency weights to mitigate fake-biased predictions
 
-使用专门的 config：
+Use the dedicated config:
 
 ```bash
-# baseline（原版）
+# baseline
 python train.py --config configs/unite_ffpp_c23.yaml --device cuda:0 \
   --run_name baseline_exp01
 
-# 创新版（GTA-free）
+# GTA-free variant
 python train.py --config configs/unite_ffpp_c23_gta_free.yaml --device cuda:0 \
   --run_name gta_free_exp01
 ```
 
-DDP 多卡训练同理，在 `scripts/train_ddp.sh` 中修改 `CONFIG` 和 `RUN_NAME` 即可。也可以直接用创新版专属脚本：
+For DDP, change `CONFIG` and `RUN_NAME` in `scripts/train_ddp.sh`. Or use the variant-specific launcher:
 
 ```bash
 bash scripts/train_gta_free.sh
 ```
 
-创新版输出目录会有 `variant=gta_free` 层，与 baseline 的 `baseline` 层完全隔离。
+The GTA-free output directory includes a `variant=gta_free` layer, fully isolated from the `baseline` layer.
 
-## 12. 常见问题
+## 12. FAQ
 
-### split 为空或提示缺失视频
+### Empty split or missing videos
 
-通常是数据还没下载完成，或者 CSV 的 `File Path` 与实际数据根目录不匹配。确认视频是否位于：
+The data likely hasn't finished downloading, or the `File Path` in the CSV doesn't match the actual data root. Verify videos are under:
 
 ```text
 data/FaceForensics++_C23
 ```
 
-并重新运行 split 构建命令。
+Then re-run the split-building command.
 
 ### `ModuleNotFoundError: No module named 'torch'`
 
-先安装依赖：
+Install dependencies:
 
 ```bash
-
 pip install -r requirements.txt
 ```
 
-如果 PyTorch 版本与 CUDA 不匹配，请按你的 CUDA 版本重新安装 PyTorch。
+If the PyTorch version is incompatible with your CUDA version, reinstall PyTorch matching your CUDA environment.
 
-### HuggingFace SigLIP 权重下载失败
+### HuggingFace SigLIP weight download fails
 
-默认模型是：
+The default model is:
 
 ```text
 google/siglip-so400m-patch14-384
 ```
 
-如果训练机器不能联网，请提前下载并缓存该模型，或把 `configs/unite_ffpp_c23.yaml` 中的 `model.siglip_model_name` 改成本地路径。
+If the training machine lacks internet access, pre-download and cache the model, or change `model.siglip_model_name` in `configs/unite_ffpp_c23.yaml` to a local path.
 
-### 显存不足
+### Out of memory (OOM)
 
-优先调整：
+Priority adjustments:
 
 ```yaml
 train:
@@ -512,16 +512,34 @@ model:
   encoder_batch_size: 1
 ```
 
-SigLIP 对 64 帧视频片段的编码成本较高，单卡训练时建议从小步 smoke test 开始。
+SigLIP encoding of 64-frame clips is expensive. Start with a small smoke test on single GPU.
 
-### DDP 报错 `Address already in use` 或端口冲突
+### DDP `Address already in use` or port conflict
 
-`torchrun` 默认使用随机端口，如果冲突可以指定：
+`torchrun` uses a random port by default. If there's a conflict, specify one explicitly:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 --master_port=29501 train.py --config configs/unite_ffpp_c23.yaml
 ```
 
-### 多卡训练时每卡显存占用比单卡高
+### Higher per-GPU memory usage under DDP vs. single GPU
 
-DDP 会在 backward 时做 all-reduce 通信，额外消耗少量显存。如果 OOM，降低每卡 batch size 或保持 `batch_size: 1`。多卡训练本身已经通过减少 accumulation steps 来提速，不需要增大 batch size。
+DDP performs all-reduce communication during backward, which consumes a small amount of extra memory. If you hit OOM, reduce per-GPU batch size or keep `batch_size: 1`. Multi-GPU training already speeds things up by reducing accumulation steps — you don't need to increase batch size.
+
+## Citation
+
+If you use this code or find it helpful, please cite the original UNITE paper:
+
+```bibtex
+@inproceedings{kundu2025unite,
+  author    = {Kundu, Rohit and Xiong, Hao and Mohanty, Vishal and Balachandran, Athula and Roy-Chowdhury, Amit K.},
+  booktitle = {2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  title     = {Towards a Universal Synthetic Video Detector: From Face or Background Manipulations to Fully AI-Generated Content},
+  year      = {2025},
+  pages     = {28050-28060}
+}
+```
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
