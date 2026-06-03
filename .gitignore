@@ -1,9 +1,6 @@
-/.claude/
-/.codex/
 /logs/
-/data/
+/data/*
+!/data/build_ffpp_splits.py
 /outputs/
 /notebooks/
 __pycache__/
-/paper/
-/CLAUDE.md
